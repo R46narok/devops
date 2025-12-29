@@ -3,8 +3,6 @@ name: CI/CD Pipeline
 on:
   push:
     branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
 
 permissions:
   contents: read
@@ -12,117 +10,21 @@ permissions:
   actions: read
 
 env:
+  DOCKER_IMAGE_NAME: mergesort-server
   JAVA_VERSION: '17'
   JAVA_DISTRIBUTION: 'temurin'
-  DOCKER_IMAGE_NAME: mergesort-server
 
 jobs:
-  # ==================== BUILD & TEST ====================
-  build-and-test:
-    name: Build & Test
-    runs-on: ubuntu-latest
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Set up JDK ${{ env.JAVA_VERSION }}
-      uses: actions/setup-java@v4
-      with:
-        java-version: ${{ env.JAVA_VERSION }}
-        distribution: ${{ env.JAVA_DISTRIBUTION }}
-        cache: 'maven'
-
-    - name: Build with Maven
-      run: mvn clean install -B
-
-    - name: Run unit tests
-      run: mvn test -B
-
-    - name: Upload build artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: maven-build
-        path: |
-          **/target/*.jar
-          !**/target/*-sources.jar
-          !**/target/*-javadoc.jar
-        retention-days: 7
-
-    - name: Upload test results
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: test-results
-        path: |
-          **/target/surefire-reports/*.xml
-          **/target/surefire-reports/*.txt
-        retention-days: 30
-
-    # - name: Publish test report
-    #   if: always()
-    #   uses: dorny/test-reporter@v1
-    #   with:
-    #     name: Maven Tests
-    #     path: '**/target/surefire-reports/*.xml'
-    #     reporter: java-junit
-    #     fail-on-error: false
-
-  code-quality:
-    name: Code Quality Analysis
-    runs-on: ubuntu-latest
-    needs: build-and-test
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Set up JDK ${{ env.JAVA_VERSION }}
-      uses: actions/setup-java@v4
-      with:
-        java-version: ${{ env.JAVA_VERSION }}
-        distribution: ${{ env.JAVA_DISTRIBUTION }}
-        cache: 'maven'
-
-    - name: Run SpotBugs analysis
-      continue-on-error: true
-      run: |
-        mvn compile -B
-        mvn spotbugs:check -B
-
-    - name: Generate SpotBugs SARIF report
-      if: always()
-      run: mvn -Dspotbugs.sarifOutput=true spotbugs:spotbugs -B
-
-    - name: Sanitize SpotBugs SARIF
-      if: always()
-      run: |
-        # Remove invalid taxonomies field if present and ensure valid SARIF JSON
-        jq 'del(.runs[].taxonomies) | .' server/target/spotbugsSarif.json > server/target/spotbugsSarif.sanitized.json || \
-        sed 's/"taxonomies":\[[^\]]*\]/"taxonomies":[]/' server/target/spotbugsSarif.json > server/target/spotbugsSarif.sanitized.json
-
-    - name: Upload SpotBugs SARIF to GitHub Security
-      if: always()
-      uses: github/codeql-action/upload-sarif@v3
-      with:
-        sarif_file: server/target/spotbugsSarif.sanitized.json
-        category: spotbugs
-
-    - name: Upload SpotBugs reports
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: spotbugs-reports
-        path: |
-          **/target/spotbugs*.xml
-          **/target/spotbugs*.json
-        retention-days: 30
+  quality-checks:
+    name: Quality Checks
+    uses: ./.github/workflows/build-test-quality.yaml
+    secrets:
+      NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
 
   security-scan:
     name: Security Scan
     runs-on: ubuntu-latest
-    needs: build-and-test
-    if: github.event_name == 'push'
+    needs: quality-checks
     
     steps:
     - name: Checkout code
@@ -153,7 +55,7 @@ jobs:
   docker-build:
     name: Build Docker Image
     runs-on: ubuntu-latest
-    needs: [build-and-test, code-quality]
+    needs: quality-checks
     
     steps:
     - name: Checkout code
@@ -185,7 +87,6 @@ jobs:
     name: Push Docker Image
     runs-on: ubuntu-latest
     needs: docker-build
-    if: github.event_name == 'push'
     
     outputs:
       image-tag: ${{ steps.meta.outputs.tags }}
@@ -233,7 +134,6 @@ jobs:
     name: Deploy to Kubernetes
     runs-on: ubuntu-latest
     needs: docker-push
-    if: github.event_name == 'push'
     environment:
       name: production
       url: ${{ steps.deployment.outputs.service-url }}
@@ -273,18 +173,14 @@ jobs:
         USE_GKE_GCLOUD_AUTH_PLUGIN: "True"
         DOCKER_REPO: ${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}
       run: |
-        # Update image in deployment
         kubectl set image deployment/mergesort-server \
           mergesort-server=$DOCKER_REPO:${{ github.sha }} \
           --record || echo " Deployment not found, will apply manifests..."
         
-        # Apply Kubernetes manifests
         kubectl apply -f k8s/
 
-        # Wait for rollout to complete
         kubectl rollout status deployment/mergesort-server --timeout=300s
 
-        # Get service information
         SERVICE_IP=$(kubectl get svc mergesort-server -o jsonpath='{.status.loadBalancer.ingress[0].ip}' || echo "pending")
         SERVICE_PORT=$(kubectl get svc mergesort-server -o jsonpath='{.spec.ports[0].port}')
         

@@ -1,0 +1,115 @@
+name: Build, Test & Code Quality
+
+on:
+  workflow_call:
+    inputs:
+      upload-artifacts:
+        description: 'Whether to upload build artifacts'
+        required: false
+        type: boolean
+        default: true
+    secrets:
+      NVD_API_KEY:
+        required: false
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+env:
+  JAVA_VERSION: '17'
+  JAVA_DISTRIBUTION: 'temurin'
+
+jobs:
+  build-and-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up JDK ${{ env.JAVA_VERSION }}
+      uses: actions/setup-java@v4
+      with:
+        java-version: ${{ env.JAVA_VERSION }}
+        distribution: ${{ env.JAVA_DISTRIBUTION }}
+        cache: 'maven'
+
+    - name: Build with Maven
+      run: mvn clean install -B
+
+    - name: Run unit tests
+      run: mvn test -B
+
+    - name: Upload build artifacts
+      if: inputs.upload-artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: maven-build
+        path: |
+          **/target/*.jar
+          !**/target/*-sources.jar
+          !**/target/*-javadoc.jar
+        retention-days: 7
+
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-results
+        path: |
+          **/target/surefire-reports/*.xml
+          **/target/surefire-reports/*.txt
+        retention-days: 30
+
+  code-quality:
+    name: Code Quality Analysis
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up JDK ${{ env.JAVA_VERSION }}
+      uses: actions/setup-java@v4
+      with:
+        java-version: ${{ env.JAVA_VERSION }}
+        distribution: ${{ env.JAVA_DISTRIBUTION }}
+        cache: 'maven'
+
+    - name: Run SpotBugs analysis
+      continue-on-error: true
+      run: |
+        mvn compile -B
+        mvn spotbugs:check -B
+
+    - name: Generate SpotBugs SARIF report
+      if: always()
+      run: mvn -Dspotbugs.sarifOutput=true spotbugs:spotbugs -B
+
+    - name: Sanitize SpotBugs SARIF
+      if: always()
+      run: |
+        # Remove invalid taxonomies field if present and ensure valid SARIF JSON
+        jq 'del(.runs[].taxonomies) | .' server/target/spotbugsSarif.json > server/target/spotbugsSarif.sanitized.json || \
+        sed 's/"taxonomies":\[[^\]]*\]/"taxonomies":[]/' server/target/spotbugsSarif.json > server/target/spotbugsSarif.sanitized.json
+
+    - name: Upload SpotBugs SARIF to GitHub Security
+      if: always()
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: server/target/spotbugsSarif.sanitized.json
+        category: spotbugs
+
+    - name: Upload SpotBugs reports
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: spotbugs-reports
+        path: |
+          **/target/spotbugs*.xml
+          **/target/spotbugs*.json
+        retention-days: 30
