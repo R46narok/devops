@@ -1,4 +1,4 @@
-name: CI
+name: CI/CD Pipeline
 
 on:
   push:
@@ -11,28 +11,45 @@ permissions:
   security-events: write
   actions: read
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
+env:
+  JAVA_VERSION: '17'
+  JAVA_DISTRIBUTION: 'temurin'
+  DOCKER_IMAGE_NAME: mergesort-server
 
+jobs:
+  # ==================== BUILD & TEST ====================
+  build-and-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Set up JDK 17
+    - name: Set up JDK ${{ env.JAVA_VERSION }}
       uses: actions/setup-java@v4
       with:
-        java-version: '17'
-        distribution: 'temurin'
+        java-version: ${{ env.JAVA_VERSION }}
+        distribution: ${{ env.JAVA_DISTRIBUTION }}
         cache: 'maven'
 
     - name: Build with Maven
       run: mvn clean install -B
 
-    - name: Run tests
+    - name: Run unit tests
       run: mvn test -B
 
-    - name: Upload Test Results
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: maven-build
+        path: |
+          **/target/*.jar
+          !**/target/*-sources.jar
+          !**/target/*-javadoc.jar
+        retention-days: 7
+
+    - name: Upload test results
       if: always()
       uses: actions/upload-artifact@v4
       with:
@@ -42,121 +59,224 @@ jobs:
           **/target/surefire-reports/*.txt
         retention-days: 30
 
-    - name: Publish Test Report
-      if: always()
-      uses: dorny/test-reporter@v1
-      with:
-        name: Maven Tests
-        path: '**/target/surefire-reports/*.xml'
-        reporter: java-junit
-        fail-on-error: false
-
-    # - name: OWASP Dependency Check # Slow AF
-    #   continue-on-error: true
-    #   run: mvn org.owasp:dependency-check-maven:check -B -DnvdApiKey=57d41c34-e2e9-4597-a970-cc8977923742
-
-    # - name: Upload OWASP Dependency Check Results
+    # - name: Publish test report
     #   if: always()
-    #   uses: actions/upload-artifact@v4
+    #   uses: dorny/test-reporter@v1
     #   with:
-    #     name: dependency-check-report
-    #     path: |
-    #       **/target/dependency-check-report.html
-    #       **/target/dependency-check-report.json
-    #     retention-days: 30
+    #     name: Maven Tests
+    #     path: '**/target/surefire-reports/*.xml'
+    #     reporter: java-junit
+    #     fail-on-error: false
 
-    - name: SpotBugs Check
+  code-quality:
+    name: Code Quality Analysis
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up JDK ${{ env.JAVA_VERSION }}
+      uses: actions/setup-java@v4
+      with:
+        java-version: ${{ env.JAVA_VERSION }}
+        distribution: ${{ env.JAVA_DISTRIBUTION }}
+        cache: 'maven'
+
+    - name: Run SpotBugs analysis
       continue-on-error: true
-      run: mvn spotbugs:check -B
+      run: |
+        mvn compile -B
+        mvn spotbugs:check -B
 
-    - name: Generate SpotBugs SARIF
+    - name: Generate SpotBugs SARIF report
       if: always()
       run: mvn -Dspotbugs.sarifOutput=true spotbugs:spotbugs -B
 
-    - name: Sanitize SpotBugs SARIF for upload
+    - name: Sanitize SpotBugs SARIF
       if: always()
       run: |
         # Remove invalid taxonomies field if present and ensure valid SARIF JSON
         jq 'del(.runs[].taxonomies) | .' server/target/spotbugsSarif.json > server/target/spotbugsSarif.sanitized.json || \
         sed 's/"taxonomies":\[[^\]]*\]/"taxonomies":[]/' server/target/spotbugsSarif.json > server/target/spotbugsSarif.sanitized.json
 
-    - name: Upload SpotBugs SARIF (server)
+    - name: Upload SpotBugs SARIF to GitHub Security
       if: always()
       uses: github/codeql-action/upload-sarif@v3
       with:
         sarif_file: server/target/spotbugsSarif.sanitized.json
+        category: spotbugs
+
+    - name: Upload SpotBugs reports
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: spotbugs-reports
+        path: |
+          **/target/spotbugs*.xml
+          **/target/spotbugs*.json
+        retention-days: 30
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    if: github.event_name == 'push'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up JDK ${{ env.JAVA_VERSION }}
+      uses: actions/setup-java@v4
+      with:
+        java-version: ${{ env.JAVA_VERSION }}
+        distribution: ${{ env.JAVA_DISTRIBUTION }}
+        cache: 'maven'
+
+    - name: Run OWASP Dependency Check
+      continue-on-error: true
+      run: mvn org.owasp:dependency-check-maven:check -B -DnvdApiKey=${{ secrets.NVD_API_KEY }}
+      timeout-minutes: 30
+
+    - name: Upload OWASP dependency check results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: dependency-check-report
+        path: |
+          **/target/dependency-check-report.html
+          **/target/dependency-check-report.json
+        retention-days: 30
+
+  docker-build:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    needs: [build-and-test, code-quality]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
 
-    - name: Build Container Image
-      run: |
-        docker build -t mergesort-server:${{ github.sha }} .
-        docker tag mergesort-server:${{ github.sha }} mergesort-server:latest
+    - name: Build Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: false
+        tags: |
+          ${{ env.DOCKER_IMAGE_NAME }}:${{ github.sha }}
+          ${{ env.DOCKER_IMAGE_NAME }}:latest
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        outputs: type=docker,dest=/tmp/docker-image.tar
 
-    - name: Save Docker Image
-      run: docker save mergesort-server:latest | gzip > mergesort-server.tar.gz
-
-    - name: Upload Docker Image Artifact
+    - name: Upload Docker image artifact
       uses: actions/upload-artifact@v4
       with:
         name: docker-image
-        path: mergesort-server.tar.gz
+        path: /tmp/docker-image.tar
         retention-days: 7
 
+  docker-push:
+    name: Push Docker Image
+    runs-on: ubuntu-latest
+    needs: docker-build
+    if: github.event_name == 'push'
+    
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+    
+    steps:
+    - name: Download Docker image artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: docker-image
+        path: /tmp
+
+    - name: Load Docker image
+      run: docker load --input /tmp/docker-image.tar
+
     - name: Log in to Docker Hub
-      if: github.event_name == 'push'
       uses: docker/login-action@v3
       with:
         username: ${{ secrets.DOCKER_USERNAME }}
         password: ${{ secrets.DOCKER_PASSWORD }}
 
-    - name: Push to Docker Registry
-      if: github.event_name == 'push'
+    - name: Docker metadata
+      id: meta
+      run: |
+        DOCKER_REPO="${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}"
+        echo "tags=${DOCKER_REPO}:latest,${DOCKER_REPO}:${{ github.sha }}" >> $GITHUB_OUTPUT
+        echo "repo=${DOCKER_REPO}" >> $GITHUB_OUTPUT
+
+    - name: Tag and push to Docker Hub
       env:
-        DOCKER_REPO: ${{ secrets.DOCKER_USERNAME }}/mergesort-server
+        DOCKER_REPO: ${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}
       run: |
         # Tag for Docker registry
-        docker tag mergesort-server:latest $DOCKER_REPO:latest
-        docker tag mergesort-server:latest $DOCKER_REPO:${{ github.sha }}
+        docker tag ${{ env.DOCKER_IMAGE_NAME }}:latest $DOCKER_REPO:latest
+        docker tag ${{ env.DOCKER_IMAGE_NAME }}:latest $DOCKER_REPO:${{ github.sha }}
         
         # Push to Docker registry
         docker push $DOCKER_REPO:latest
         docker push $DOCKER_REPO:${{ github.sha }}
-        echo "Image pushed to Docker registry: $DOCKER_REPO"
+        
+        echo "Images pushed successfully:"
+        echo "  - $DOCKER_REPO:latest"
+        echo "  - $DOCKER_REPO:${{ github.sha }}"
 
-    - name: Deploy to Local Kubernetes
-      if: github.event_name == 'push'
+  deploy-kubernetes:
+    name: Deploy to Kubernetes
+    runs-on: ubuntu-latest
+    needs: docker-push
+    if: github.event_name == 'push'
+    environment:
+      name: production
+      url: ${{ steps.deployment.outputs.service-url }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+      with:
+        service_account_key: ${{ secrets.GCP_SA_KEY }}
+        export_default_credentials: true
+
+    - name: Install gke-gcloud-auth-plugin
+      run: |
+        gcloud components install gke-gcloud-auth-plugin --quiet
+
+    - name: Configure kubectl
       env:
         KUBE_CONFIG: ${{ secrets.KUBE_CONFIG_BASE64 }}
-        GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
-        DOCKER_REPO: ${{ secrets.DOCKER_USERNAME }}/mergesort-server
       run: |
-        # Install gcloud CLI and gke-gcloud-auth-plugin
-        echo "Installing Google Cloud SDK and auth plugin..."
-        curl https://sdk.cloud.google.com | bash > /dev/null
-        source $HOME/google-cloud-sdk/path.bash.inc
-        gcloud components install gke-gcloud-auth-plugin --quiet
-        
-        # Authenticate with service account
-        echo "$GCP_SA_KEY" | base64 -d > $HOME/gcp-key.json
-        gcloud auth activate-service-account --key-file=$HOME/gcp-key.json
-        
-        # Setup kubectl with your cluster config
         mkdir -p $HOME/.kube
         echo "$KUBE_CONFIG" | base64 -d > $HOME/.kube/config
         chmod 600 $HOME/.kube/config
-        
-        # Set USE_GKE_GCLOUD_AUTH_PLUGIN environment variable
-        export USE_GKE_GCLOUD_AUTH_PLUGIN=True
-        
-        # Verify connection
+
+    - name: Verify cluster connection
+      env:
+        USE_GKE_GCLOUD_AUTH_PLUGIN: "True"
+      run: |
         kubectl cluster-info
-        
+        kubectl get nodes
+
+    - name: Update deployment image
+      id: deployment
+      env:
+        USE_GKE_GCLOUD_AUTH_PLUGIN: "True"
+        DOCKER_REPO: ${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}
+      run: |
         # Update image in deployment
         kubectl set image deployment/mergesort-server \
           mergesort-server=$DOCKER_REPO:${{ github.sha }} \
-          --record || echo "Deployment not found, applying manifests..."
+          --record || echo " Deployment not found, will apply manifests..."
         
         # Apply Kubernetes manifests
         kubectl apply -f k8s/
@@ -164,6 +284,14 @@ jobs:
         # Wait for rollout to complete
         kubectl rollout status deployment/mergesort-server --timeout=300s
 
-        # Verify deployment
+        # Get service information
+        SERVICE_IP=$(kubectl get svc mergesort-server -o jsonpath='{.status.loadBalancer.ingress[0].ip}' || echo "pending")
+        SERVICE_PORT=$(kubectl get svc mergesort-server -o jsonpath='{.spec.ports[0].port}')
+        
+        echo "service-url=http://${SERVICE_IP}:${SERVICE_PORT}" >> $GITHUB_OUTPUT
+        
+        echo "Deployment successful!"
+        echo "Pods:"
         kubectl get pods -l app=mergesort-server
+        echo "Service:"
         kubectl get svc mergesort-server
