@@ -65,19 +65,19 @@ jobs:
     #       **/target/dependency-check-report.json
     #     retention-days: 30
 
-    - name: Run SpotBugs (generate SARIF)
+    - name: SpotBugs Check
       continue-on-error: true
-      run: |
-        mvn -B com.github.spotbugs:spotbugs-maven-plugin:4.8.3.0:spotbugs \
-          -Dspotbugs.failOnError=false \
-          -Dspotbugs.sarifOutput=true \
-          -Dspotbugs.sarifOutputFile=target/spotbugs/spotbugs.sarif
+      run: mvn spotbugs:check -B
 
-    - name: Upload SpotBugs SARIF to GitHub Security
+    - name: Generate SpotBugs SARIF
+      if: always()
+      run: mvn -Dspotbugs.sarifOutput=true spotbugs:spotbugs -B
+
+    - name: Upload SpotBugs SARIF (server)
       if: always()
       uses: github/codeql-action/upload-sarif@v3
       with:
-        sarif_file: target/spotbugs/spotbugs.sarif
+        sarif_file: server/target/spotbugsSarif.json
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
