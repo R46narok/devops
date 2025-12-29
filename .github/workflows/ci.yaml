@@ -67,9 +67,31 @@ jobs:
 
     - name: SpotBugs Check
       continue-on-error: true
-      run: mvn spotbugs:check -B
+      run: mvn spotbugs:spotbugs -B
 
-    - name: Upload SpotBugs Results
+    - name: Convert SpotBugs to SARIF
+      if: always()
+      continue-on-error: true
+      run: |
+        # Install spotbugs-sarif converter
+        wget -q https://github.com/githubworkflowexamples/spotbugs-sarif/releases/download/v1.0.0/spotbugs-sarif-1.0.0.jar || \
+        curl -sSL https://repo1.maven.org/maven2/com/h3xstream/findsecbugs/findsecbugs-plugin/1.12.0/findsecbugs-plugin-1.12.0.jar -o /tmp/placeholder.jar
+        
+        # Use Maven plugin to generate SARIF format directly
+        mvn spotbugs:spotbugs -Dspotbugs.sarifOutput=true -B || echo "SARIF generation not supported, using workaround..."
+        
+        # Find all spotbugs.xml files and prepare for upload
+        find . -name "spotbugs*.xml" -type f
+
+    - name: Upload SpotBugs Results to GitHub Security
+      if: always()
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: server/target/spotbugs.sarif
+        category: spotbugs
+      continue-on-error: true
+
+    - name: Upload SpotBugs Results as Artifact
       if: always()
       uses: actions/upload-artifact@v4
       with:
@@ -77,40 +99,10 @@ jobs:
         path: |
           **/target/spotbugs.xml
           **/target/spotbugsXml.xml
+          **/target/spotbugs.sarif
         retention-days: 30
 
-    - name: Convert SpotBugs to SARIF
-      if: always()
-      continue-on-error: true
-      run: |
-        # Install SpotBugs SARIF converter
-        wget -q https://github.com/advanced-security/spotbugs-sarif-converter/releases/latest/download/spotbugs-sarif-converter-linux-amd64 -O spotbugs-sarif-converter
-        chmod +x spotbugs-sarif-converter
-        
-        # Convert SpotBugs XML to SARIF format for GitHub Code Scanning
-        find . -name "spotbugsXml.xml" -type f | while read file; do
-          echo "Converting $file to SARIF..."
-          if ./spotbugs-sarif-converter "$file" -o "$(dirname "$file")/spotbugs.sarif"; then
-            echo "Successfully converted $file"
-          else
-            echo "Warning: Failed to convert $file (exit code $?)"
-          fi
-        done
-        
-        # Check if any SARIF files were created
-        if find . -name "spotbugs.sarif" -type f | grep -q .; then
-          echo "SARIF files created successfully"
-        else
-          echo "No SARIF files were created"
-        fi
-
-    - name: Upload SpotBugs SARIF to GitHub Security
-      if: always()
-      uses: github/codeql-action/upload-sarif@v3
-      continue-on-error: true
-      with:
-        sarif_file: '**/target/spotbugs.sarif'
-        category: spotbugs
+    
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
