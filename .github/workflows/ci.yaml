@@ -42,14 +42,14 @@ jobs:
           **/target/surefire-reports/*.txt
         retention-days: 30
 
-    - name: Publish Test Report
-      if: always()
-      uses: dorny/test-reporter@v1
-      with:
-        name: Maven Tests
-        path: '**/target/surefire-reports/*.xml'
-        reporter: java-junit
-        fail-on-error: false
+    # - name: Publish Test Report
+    #   if: always()
+    #   uses: dorny/test-reporter@v1
+    #   with:
+    #     name: Maven Tests
+    #     path: '**/target/surefire-reports/*.xml'
+    #     reporter: java-junit
+    #     fail-on-error: false
 
     # - name: OWASP Dependency Check # Slow AF
     #   continue-on-error: true
