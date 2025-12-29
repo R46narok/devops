@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+        cache: 'maven'
+
+    - name: Build with Maven
+      run: mvn clean install -B
+
+    - name: Run tests
+      run: mvn test -B
+
+    - name: OWASP Dependency Check # Slow AF
+      continue-on-error: true
+      run: mvn org.owasp:dependency-check-maven:check -B -DnvdApiKey=57d41c34-e2e9-4597-a970-cc8977923742
+
+    - name: SpotBugs Check
+      continue-on-error: true
+      run: mvn spotbugs:check -B
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Build Container Image
+      run: |
+        docker build -t mergesort-server:${{ github.sha }} .
+        docker tag mergesort-server:${{ github.sha }} mergesort-server:latest
+
+    - name: Save Docker Image
+      run: docker save mergesort-server:latest | gzip > mergesort-server.tar.gz
+
+    - name: Push to Local Registry
+      if: github.event_name == 'push'
+      env:
+        REGISTRY_URL: ${{ secrets.LOCAL_REGISTRY_URL }}  # e.g., https://your-tunnel-url.ngrok.io
+        REGISTRY_AUTH: ${{ secrets.REGISTRY_AUTH }}      # Optional: basic auth if needed
+      run: |
+        # Load and tag for your local registry
+        docker tag mergesort-server:latest ${{ secrets.LOCAL_REGISTRY_URL }}/mergesort-server:latest
+        docker tag mergesort-server:latest ${{ secrets.LOCAL_REGISTRY_URL }}/mergesort-server:${{ github.sha }}
+        
+        # Push to local registry via tunnel
+        docker push ${{ secrets.LOCAL_REGISTRY_URL }}/mergesort-server:latest
+        docker push ${{ secrets.LOCAL_REGISTRY_URL }}/mergesort-server:${{ github.sha }}
+        echo "Image pushed to local registry"
+
+    - name: Deploy to Local Kubernetes
+      if: github.event_name == 'push'
+      env:
+        KUBE_CONFIG: ${{ secrets.KUBE_CONFIG_BASE64 }}
+      run: |
+        # Setup kubectl with your local cluster config
+        mkdir -p $HOME/.kube
+        echo "$KUBE_CONFIG" | base64 -d > $HOME/.kube/config
+        chmod 600 $HOME/.kube/config
+        
+        # Verify connection
+        kubectl cluster-info
+        
+        # Update image in deployment
+        kubectl set image deployment/mergesort-server \
+          mergesort-server=${{ secrets.LOCAL_REGISTRY_URL }}/mergesort-server:${{ github.sha }} \
+          --record || echo "Deployment not found, applying manifests..."
+        
+        # Apply Kubernetes manifests
+        kubectl apply -f k8s/
+
+        # Wait for rollout to complete
+        kubectl rollout status deployment/mergesort-server --timeout=300s
+
+        # Verify deployment
+        kubectl get pods -l app=mergesort-server
+        kubectl get svc mergesort-server

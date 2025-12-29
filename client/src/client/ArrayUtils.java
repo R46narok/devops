@@ -18,6 +18,7 @@ public class ArrayUtils {
         return Arrays.toString(array).replaceAll("[\\[\\]]", "");
     }
 
+    @SuppressWarnings("DMI_RANDOM_USED_ONLY_ONCE")
     public static int[] randomArray(int size, long seed) {
         int[] a = new int[size];
         Random rnd = new Random(seed);

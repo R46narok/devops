@@ -1,0 +1,2 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<BugCollection version='4.8.3' threshold='low' effort='max'><Error></Error><Project><SrcDir>/Users/I752356/uni/network-programming/mergesort-server/server/src</SrcDir><SrcDir>/Users/I752356/uni/network-programming/mergesort-server/server/target/generated-sources/annotations</SrcDir><SrcDir>/Users/I752356/uni/network-programming/mergesort-server/server/src/test</SrcDir><SrcDir>/Users/I752356/uni/network-programming/mergesort-server/server/target/generated-test-sources/test-annotations</SrcDir></Project></BugCollection>

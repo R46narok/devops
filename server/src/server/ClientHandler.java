@@ -1,10 +1,14 @@
 package server;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+
 import java.io.*;
 import java.net.*;
 
+@SuppressFBWarnings("EI_EXPOSE_REP2")
 public class ClientHandler implements Runnable {
     private Socket clientSocket;
 
+    @SuppressFBWarnings("EI_EXPOSE_REP2")
     public ClientHandler(Socket socket) {
         this.clientSocket = socket;
     }

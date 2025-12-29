@@ -2,7 +2,9 @@ package client;
 
 import java.io.*;
 import java.net.*;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.Locale;
 import java.util.Scanner;
 
 public class MergeSortClient {
@@ -14,7 +16,7 @@ public class MergeSortClient {
         System.out.println("Format: <comma-separated integers> <number of threads>");
         System.out.println("Commands: benchmark <size> <maxThreads> <runs>");
 
-        Scanner scanner = new Scanner(System.in);
+        Scanner scanner = new Scanner(System.in, StandardCharsets.UTF_8);
         try (Socket socket = new Socket(SERVER_ADDRESS, SERVER_PORT);
              ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream());
              ObjectInputStream in = new ObjectInputStream(socket.getInputStream())) {
@@ -32,7 +34,7 @@ public class MergeSortClient {
                     break;
                 }
 
-                if (line.toLowerCase().startsWith("benchmark")) {
+                if (line.toLowerCase(Locale.ROOT).startsWith("benchmark")) {
                     String[] parts = line.split("\\s+");
                     if (parts.length < 4) {
                         System.out.println("Usage: benchmark <size> <maxThreads> <runs>");

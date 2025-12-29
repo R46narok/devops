@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mergesort-server
+  labels:
+    app: mergesort-server
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: mergesort-server
+  template:
+    metadata:
+      labels:
+        app: mergesort-server
+    spec:
+      containers:
+      - name: mergesort-server
+        image: localhost:5000/mergesort-server:latest
+        ports:
+        - containerPort: 12345
+          name: tcp
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          tcpSocket:
+            port: 12345
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        readinessProbe:
+          tcpSocket:
+            port: 12345
+          initialDelaySeconds: 5
+          periodSeconds: 5
