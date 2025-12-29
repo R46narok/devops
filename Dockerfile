@@ -14,6 +14,8 @@ RUN apt-get update && \
 
 FROM eclipse-temurin:17-jre
 
+#some notes
+
 WORKDIR /app
 
 COPY --from=build /app/server/target/mergesort-server-app-1.0.0.jar /app/server.jar
