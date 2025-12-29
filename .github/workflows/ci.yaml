@@ -152,10 +152,16 @@ jobs:
       run: |
         gcloud components install gke-gcloud-auth-plugin --quiet
 
-    - name: Configure kubectl
+    - name: Configure kubectl and GCP authentication
       env:
         KUBE_CONFIG: ${{ secrets.KUBE_CONFIG_BASE64 }}
+        GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
       run: |
+        # Authenticate with service account
+        echo "$GCP_SA_KEY" | base64 -d > $HOME/gcp-key.json
+        gcloud auth activate-service-account --key-file=$HOME/gcp-key.json
+        
+        # Setup kubectl with your cluster config
         mkdir -p $HOME/.kube
         echo "$KUBE_CONFIG" | base64 -d > $HOME/.kube/config
         chmod 600 $HOME/.kube/config
