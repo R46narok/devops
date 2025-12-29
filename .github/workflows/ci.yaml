@@ -143,6 +143,7 @@ jobs:
       if: github.event_name == 'push'
       env:
         KUBE_CONFIG: ${{ secrets.KUBE_CONFIG_BASE64 }}
+        GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
         DOCKER_REPO: ${{ secrets.DOCKER_USERNAME }}/mergesort-server
       run: |
         # Install gcloud CLI and gke-gcloud-auth-plugin
@@ -151,10 +152,17 @@ jobs:
         source $HOME/google-cloud-sdk/path.bash.inc
         gcloud components install gke-gcloud-auth-plugin --quiet
         
+        # Authenticate with service account
+        echo "$GCP_SA_KEY" | base64 -d > $HOME/gcp-key.json
+        gcloud auth activate-service-account --key-file=$HOME/gcp-key.json
+        
         # Setup kubectl with your cluster config
         mkdir -p $HOME/.kube
         echo "$KUBE_CONFIG" | base64 -d > $HOME/.kube/config
         chmod 600 $HOME/.kube/config
+        
+        # Set USE_GKE_GCLOUD_AUTH_PLUGIN environment variable
+        export USE_GKE_GCLOUD_AUTH_PLUGIN=True
         
         # Verify connection
         kubectl cluster-info
