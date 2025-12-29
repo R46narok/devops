@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [ main, master ]
 
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -27,13 +32,73 @@ jobs:
     - name: Run tests
       run: mvn test -B
 
-    - name: OWASP Dependency Check # Slow AF
-      continue-on-error: true
-      run: mvn org.owasp:dependency-check-maven:check -B -DnvdApiKey=57d41c34-e2e9-4597-a970-cc8977923742
+    - name: Upload Test Results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-results
+        path: |
+          **/target/surefire-reports/*.xml
+          **/target/surefire-reports/*.txt
+        retention-days: 30
+
+    - name: Publish Test Report
+      if: always()
+      uses: dorny/test-reporter@v1
+      with:
+        name: Maven Tests
+        path: '**/target/surefire-reports/*.xml'
+        reporter: java-junit
+        fail-on-error: false
+
+    # - name: OWASP Dependency Check # Slow AF
+    #   continue-on-error: true
+    #   run: mvn org.owasp:dependency-check-maven:check -B -DnvdApiKey=57d41c34-e2e9-4597-a970-cc8977923742
+
+    # - name: Upload OWASP Dependency Check Results
+    #   if: always()
+    #   uses: actions/upload-artifact@v4
+    #   with:
+    #     name: dependency-check-report
+    #     path: |
+    #       **/target/dependency-check-report.html
+    #       **/target/dependency-check-report.json
+    #     retention-days: 30
 
     - name: SpotBugs Check
       continue-on-error: true
       run: mvn spotbugs:check -B
+
+    - name: Upload SpotBugs Results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: spotbugs-report
+        path: |
+          **/target/spotbugs.xml
+          **/target/spotbugsXml.xml
+        retention-days: 30
+
+    - name: Convert SpotBugs to SARIF
+      if: always()
+      continue-on-error: true
+      run: |
+        # Install SpotBugs SARIF converter
+        wget -q https://github.com/advanced-security/spotbugs-sarif-converter/releases/latest/download/spotbugs-sarif-converter-linux-amd64 -O spotbugs-sarif-converter
+        chmod +x spotbugs-sarif-converter
+        
+        # Convert SpotBugs XML to SARIF format for GitHub Code Scanning
+        find . -name "spotbugsXml.xml" -type f | while read file; do
+          ./spotbugs-sarif-converter "$file" -o "$(dirname "$file")/spotbugs.sarif"
+        done
+
+    - name: Upload SpotBugs SARIF to GitHub Security
+      if: always()
+      uses: github/codeql-action/upload-sarif@v3
+      continue-on-error: true
+      with:
+        sarif_file: '**/target/spotbugs.sarif'
+        category: spotbugs
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
@@ -46,25 +111,39 @@ jobs:
     - name: Save Docker Image
       run: docker save mergesort-server:latest | gzip > mergesort-server.tar.gz
 
-    - name: Push to Local Registry
+    - name: Upload Docker Image Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: docker-image
+        path: mergesort-server.tar.gz
+        retention-days: 7
+
+    - name: Log in to Docker Hub
+      if: github.event_name == 'push'
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+
+    - name: Push to Docker Registry
       if: github.event_name == 'push'
       env:
-        REGISTRY_URL: ${{ secrets.LOCAL_REGISTRY_URL }}  # e.g., https://your-tunnel-url.ngrok.io
-        REGISTRY_AUTH: ${{ secrets.REGISTRY_AUTH }}      # Optional: basic auth if needed
+        DOCKER_REPO: ${{ secrets.DOCKER_USERNAME }}/mergesort-server
       run: |
-        # Load and tag for your local registry
-        docker tag mergesort-server:latest ${{ secrets.LOCAL_REGISTRY_URL }}/mergesort-server:latest
-        docker tag mergesort-server:latest ${{ secrets.LOCAL_REGISTRY_URL }}/mergesort-server:${{ github.sha }}
+        # Tag for Docker registry
+        docker tag mergesort-server:latest $DOCKER_REPO:latest
+        docker tag mergesort-server:latest $DOCKER_REPO:${{ github.sha }}
         
-        # Push to local registry via tunnel
-        docker push ${{ secrets.LOCAL_REGISTRY_URL }}/mergesort-server:latest
-        docker push ${{ secrets.LOCAL_REGISTRY_URL }}/mergesort-server:${{ github.sha }}
-        echo "Image pushed to local registry"
+        # Push to Docker registry
+        docker push $DOCKER_REPO:latest
+        docker push $DOCKER_REPO:${{ github.sha }}
+        echo "Image pushed to Docker registry: $DOCKER_REPO"
 
     - name: Deploy to Local Kubernetes
       if: github.event_name == 'push'
       env:
         KUBE_CONFIG: ${{ secrets.KUBE_CONFIG_BASE64 }}
+        DOCKER_REPO: ${{ secrets.DOCKER_USERNAME }}/mergesort-server
       run: |
         # Setup kubectl with your local cluster config
         mkdir -p $HOME/.kube
@@ -76,7 +155,7 @@ jobs:
         
         # Update image in deployment
         kubectl set image deployment/mergesort-server \
-          mergesort-server=${{ secrets.LOCAL_REGISTRY_URL }}/mergesort-server:${{ github.sha }} \
+          mergesort-server=$DOCKER_REPO:${{ github.sha }} \
           --record || echo "Deployment not found, applying manifests..."
         
         # Apply Kubernetes manifests

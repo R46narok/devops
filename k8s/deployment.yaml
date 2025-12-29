@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
       - name: mergesort-server
-        image: localhost:5000/mergesort-server:latest
+        image: localhost:5001/mergesort-server:latest
         ports:
         - containerPort: 12345
           name: tcp

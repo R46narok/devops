@@ -11,8 +11,8 @@ echo ""
 echo "Step 2: Setting up local registry..."
 # Check if registry is already running
 if ! podman ps | grep -q registry; then
-  echo "Starting local registry on port 5000..."
-  podman run -d -p 5000:5000 --name registry docker.io/library/registry:2
+  echo "Starting local registry on port 5001..."
+  podman run -d -p 5001:5000 --name registry docker.io/library/registry:2
 else
   echo "Registry already running"
 fi

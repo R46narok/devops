@@ -6,11 +6,11 @@ podman build -t mergesort-server:latest .
 
 echo ""
 echo "=== Tagging image for local registry ==="
-podman tag mergesort-server:latest localhost:5000/mergesort-server:latest
+podman tag mergesort-server:latest localhost:5001/mergesort-server:latest
 
 echo ""
 echo "=== Pushing to local registry ==="
-podman push localhost:5000/mergesort-server:latest
+podman push localhost:5001/mergesort-server:latest
 
 echo ""
 echo "=== Applying Kubernetes manifests ==="
