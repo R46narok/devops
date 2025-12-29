@@ -42,14 +42,14 @@ jobs:
           **/target/surefire-reports/*.txt
         retention-days: 30
 
-    # - name: Publish Test Report
-    #   if: always()
-    #   uses: dorny/test-reporter@v1
-    #   with:
-    #     name: Maven Tests
-    #     path: '**/target/surefire-reports/*.xml'
-    #     reporter: java-junit
-    #     fail-on-error: false
+    - name: Publish Test Report
+      if: always()
+      uses: dorny/test-reporter@v1
+      with:
+        name: Maven Tests
+        path: '**/target/surefire-reports/*.xml'
+        reporter: java-junit
+        fail-on-error: false
 
     # - name: OWASP Dependency Check # Slow AF
     #   continue-on-error: true
@@ -79,26 +79,26 @@ jobs:
           **/target/spotbugsXml.xml
         retention-days: 30
 
-    # - name: Convert SpotBugs to SARIF
-    #   if: always()
-    #   continue-on-error: true
-    #   run: |
-    #     # Install SpotBugs SARIF converter
-    #     wget -q https://github.com/advanced-security/spotbugs-sarif-converter/releases/latest/download/spotbugs-sarif-converter-linux-amd64 -O spotbugs-sarif-converter
-    #     chmod +x spotbugs-sarif-converter
+    - name: Convert SpotBugs to SARIF
+      if: always()
+      continue-on-error: true
+      run: |
+        # Install SpotBugs SARIF converter
+        wget -q https://github.com/advanced-security/spotbugs-sarif-converter/releases/latest/download/spotbugs-sarif-converter-linux-amd64 -O spotbugs-sarif-converter
+        chmod +x spotbugs-sarif-converter
         
-    #     # Convert SpotBugs XML to SARIF format for GitHub Code Scanning
-    #     find . -name "spotbugsXml.xml" -type f | while read file; do
-    #       ./spotbugs-sarif-converter "$file" -o "$(dirname "$file")/spotbugs.sarif"
-    #     done
+        # Convert SpotBugs XML to SARIF format for GitHub Code Scanning
+        find . -name "spotbugsXml.xml" -type f | while read file; do
+          ./spotbugs-sarif-converter "$file" -o "$(dirname "$file")/spotbugs.sarif"
+        done
 
-    # - name: Upload SpotBugs SARIF to GitHub Security
-    #   if: always()
-    #   uses: github/codeql-action/upload-sarif@v3
-    #   continue-on-error: true
-    #   with:
-    #     sarif_file: '**/target/spotbugs.sarif'
-    #     category: spotbugs
+    - name: Upload SpotBugs SARIF to GitHub Security
+      if: always()
+      uses: github/codeql-action/upload-sarif@v3
+      continue-on-error: true
+      with:
+        sarif_file: '**/target/spotbugs.sarif'
+        category: spotbugs
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
