@@ -20,15 +20,7 @@
             <effort>Max</effort>
             <threshold>Low</threshold>
             <xmlOutput>true</xmlOutput>
-            <sarif>true</sarif>
           </configuration>
-          <dependencies>
-            <dependency>
-              <groupId>com.github.spotbugs</groupId>
-              <artifactId>spotbugs</artifactId>
-              <version>4.8.3</version>
-            </dependency>
-          </dependencies>
         </plugin>
       </plugins>
     </pluginManagement>
