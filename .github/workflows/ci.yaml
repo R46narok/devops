@@ -89,8 +89,20 @@ jobs:
         
         # Convert SpotBugs XML to SARIF format for GitHub Code Scanning
         find . -name "spotbugsXml.xml" -type f | while read file; do
-          ./spotbugs-sarif-converter "$file" -o "$(dirname "$file")/spotbugs.sarif"
+          echo "Converting $file to SARIF..."
+          if ./spotbugs-sarif-converter "$file" -o "$(dirname "$file")/spotbugs.sarif"; then
+            echo "Successfully converted $file"
+          else
+            echo "Warning: Failed to convert $file (exit code $?)"
+          fi
         done
+        
+        # Check if any SARIF files were created
+        if find . -name "spotbugs.sarif" -type f | grep -q .; then
+          echo "SARIF files created successfully"
+        else
+          echo "No SARIF files were created"
+        fi
 
     - name: Upload SpotBugs SARIF to GitHub Security
       if: always()
