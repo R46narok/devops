@@ -73,11 +73,18 @@ jobs:
       if: always()
       run: mvn -Dspotbugs.sarifOutput=true spotbugs:spotbugs -B
 
+    - name: Sanitize SpotBugs SARIF for upload
+      if: always()
+      run: |
+        # Remove invalid taxonomies field if present and ensure valid SARIF JSON
+        jq 'del(.runs[].taxonomies) | .' server/target/spotbugsSarif.json > server/target/spotbugsSarif.sanitized.json || \
+        sed 's/"taxonomies":\[[^\]]*\]/"taxonomies":[]/' server/target/spotbugsSarif.json > server/target/spotbugsSarif.sanitized.json
+
     - name: Upload SpotBugs SARIF (server)
       if: always()
       uses: github/codeql-action/upload-sarif@v3
       with:
-        sarif_file: server/target/spotbugsSarif.json
+        sarif_file: server/target/spotbugsSarif.sanitized.json
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
