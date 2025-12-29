@@ -145,7 +145,13 @@ jobs:
         KUBE_CONFIG: ${{ secrets.KUBE_CONFIG_BASE64 }}
         DOCKER_REPO: ${{ secrets.DOCKER_USERNAME }}/mergesort-server
       run: |
-        # Setup kubectl with your local cluster config
+        # Install gcloud CLI and gke-gcloud-auth-plugin
+        echo "Installing Google Cloud SDK and auth plugin..."
+        curl https://sdk.cloud.google.com | bash > /dev/null
+        source $HOME/google-cloud-sdk/path.bash.inc
+        gcloud components install gke-gcloud-auth-plugin --quiet
+        
+        # Setup kubectl with your cluster config
         mkdir -p $HOME/.kube
         echo "$KUBE_CONFIG" | base64 -d > $HOME/.kube/config
         chmod 600 $HOME/.kube/config
